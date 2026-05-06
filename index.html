@@ -3805,8 +3805,80 @@ function initUI() {
   renderDashboard();
 }
 
+/* ★ ONE-TIME MIGRATION: Parse static HTML rows → state if localStorage is empty */
+function migrateDataFromHTML() {
+  const parsePx = t => parseFloat((t || '').replace(/[^\d.]/g, '')) || 0;
+  const getOnId = (el, fnName) => {
+    const onStr = (el ? el.getAttribute('onclick') || '' : '').replace(/&#39;/g, "'");
+    const m = onStr.match(new RegExp(fnName + "\\('([^']+)'\\)"));
+    return m ? m[1] : null;
+  };
+
+  /* — Devices (Main Inventory) — */
+  if (!state.devices || state.devices.length === 0) {
+    const tbody = document.getElementById('devices-table');
+    if (tbody) {
+      const items = [];
+      tbody.querySelectorAll('tr').forEach(row => {
+        const tds = row.querySelectorAll('td');
+        if (tds.length < 7) return;
+        const editBtn = row.querySelector('button[onclick*="openEditDevice"]');
+        if (!editBtn) return;
+        const id = getOnId(editBtn, 'openEditDevice');
+        if (!id) return;
+        const nameEl = tds[0].querySelector('b');
+        const name = nameEl ? nameEl.textContent.trim() : '';
+        const barcode = tds[1].textContent.trim() === '—' ? '' : tds[1].textContent.trim();
+        const typeEl = tds[2].querySelector('.badge');
+        const type = typeEl ? typeEl.textContent.trim() : '';
+        const buy  = parsePx(tds[3].textContent);
+        const sell = parsePx(tds[4].textContent);
+        const qtyEl = tds[6].querySelector('b');
+        const qty = qtyEl ? (parseInt(qtyEl.textContent) || 0) : 0;
+        items.push({ id, name, barcode, type, buy, sell, qty, starred: false });
+      });
+      if (items.length > 0) {
+        state.devices = items;
+        save(K.devices, items);
+        console.log('✅ تم استيراد ' + items.length + ' صنف من المخزون الرئيسي');
+      }
+    }
+  }
+
+  /* — Maintenance Stock — */
+  if (!state.maintStock || state.maintStock.length === 0) {
+    const tbody = document.getElementById('maint-stock-table');
+    if (tbody) {
+      const items = [];
+      tbody.querySelectorAll('tr').forEach(row => {
+        const tds = row.querySelectorAll('td');
+        if (tds.length < 6) return;
+        const deductBtn = row.querySelector('button[onclick*="deductMaintItem"]');
+        if (!deductBtn) return;
+        const id = getOnId(deductBtn, 'deductMaintItem');
+        if (!id) return;
+        const nameEl = tds[0].querySelector('b');
+        const noteEl = tds[0].querySelector('small');
+        const name = nameEl ? nameEl.textContent.trim() : tds[0].textContent.trim();
+        const note = noteEl ? noteEl.textContent.trim() : '';
+        const qtyEl = tds[1].querySelector('b.stock-ok, b.stock-low, b');
+        const qty = qtyEl ? (parseInt(qtyEl.textContent) || 0) : 0;
+        const buy  = parsePx(tds[3].textContent);
+        const sell = parsePx(tds[4].textContent);
+        items.push({ id, name, note, qty, buy, sell, deductions: [] });
+      });
+      if (items.length > 0) {
+        state.maintStock = items;
+        save(K.maintStock, items);
+        console.log('✅ تم استيراد ' + items.length + ' قطعة من مخزون الصيانة');
+      }
+    }
+  }
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   loadAll();
+  migrateDataFromHTML(); // ← restore static HTML data to localStorage if needed
   initUI();
 
   /* Add cloud backup/restore buttons to the navigation */
