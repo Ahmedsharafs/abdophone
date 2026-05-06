@@ -2499,11 +2499,44 @@ let state = { devices: [], sales: [], expenses: [], employees: [], salaries: [],
 function loadAll() { Object.keys(K).forEach(k => state[k] = load(K[k], state[k])); }
 function saveAll() {
   Object.keys(K).forEach(k => save(K[k], state[k]));
-  if(db && fbSynced) {
-    const fbData = {};
-    Object.keys(K).forEach(k => fbData[k] = state[k]);
-    db.set(fbData).catch(e => console.warn('Firebase write failed:', e));
-  }
+}
+
+/* ★ Manual Cloud Backup / Restore (no auto-sync to avoid race conditions) */
+function cloudBackup() {
+  if(!db) return alert('❌ Firebase غير متاح');
+  const fbData = {};
+  Object.keys(K).forEach(k => {
+    const v = state[k];
+    if(v == null) return;
+    if(Array.isArray(v) && v.length === 0) return;
+    if(!Array.isArray(v) && typeof v === 'object' && Object.keys(v).length === 0) return;
+    fbData[k] = v;
+  });
+  if(Object.keys(fbData).length === 0) return alert('⚠️ لا توجد بيانات للحفظ');
+  if(!confirm('سيتم رفع كل بياناتك للسحابة (Firebase). متابعة؟')) return;
+  db.set(fbData).then(() => {
+    alert('✅ تم الرفع بنجاح\nالأقسام: ' + Object.keys(fbData).join(', '));
+  }).catch(e => alert('❌ فشل: ' + e.message));
+}
+
+function cloudRestore() {
+  if(!db) return alert('❌ Firebase غير متاح');
+  if(!confirm('⚠️ سيتم استبدال البيانات المحلية بالنسخة من السحابة. متابعة؟')) return;
+  db.once('value').then(snap => {
+    const data = snap.val();
+    if(!data) return alert('⚠️ لا توجد بيانات في السحابة');
+    Object.keys(K).forEach(k => {
+      if(data[k] === undefined || data[k] === null) return;
+      const expectArray = Array.isArray(state[k]);
+      if(expectArray) state[k] = Array.isArray(data[k]) ? data[k] : Object.values(data[k]);
+      else state[k] = data[k];
+    });
+    if(state.categories && !Array.isArray(state.categories.sales)) state.categories.sales = Object.values(state.categories.sales || {});
+    if(state.categories && !Array.isArray(state.categories.expenses)) state.categories.expenses = Object.values(state.categories.expenses || {});
+    Object.keys(K).forEach(k => save(K[k], state[k]));
+    alert('✅ تم الاستعادة\nالأقسام: ' + Object.keys(data).join(', ') + '\nسيتم تحديث الصفحة');
+    location.reload();
+  }).catch(e => alert('❌ فشل: ' + e.message));
 }
 
 function initDefaults() {
@@ -3776,46 +3809,19 @@ document.addEventListener('DOMContentLoaded', () => {
   loadAll();
   initUI();
 
-  if(!db) return;
-
-  const syncBar = document.createElement('div');
-  syncBar.id = 'fb-sync-bar';
-  syncBar.innerHTML = '🔄 جاري مزامنة البيانات...';
-  syncBar.style.cssText = 'position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:#1a1d2e;border:1px solid #f0b429;color:#f0b429;padding:8px 20px;border-radius:20px;font-size:13px;font-weight:700;z-index:9999;font-family:Cairo,sans-serif;';
-  document.body.appendChild(syncBar);
-
-  db.once('value').then(snap => {
-    const data = snap.val();
-    if(data) {
-      Object.keys(K).forEach(k => {
-        if(data[k] === undefined || data[k] === null) return;
-        const expectArray = Array.isArray(state[k]);
-        if(expectArray) {
-          state[k] = Array.isArray(data[k]) ? data[k] : Object.values(data[k]);
-        } else {
-          state[k] = data[k];
-        }
-      });
-      if(state.categories && !Array.isArray(state.categories.sales)) state.categories.sales = Object.values(state.categories.sales || {});
-      if(state.categories && !Array.isArray(state.categories.expenses)) state.categories.expenses = Object.values(state.categories.expenses || {});
-      Object.keys(K).forEach(k => save(K[k], state[k]));
-      initUI();
-    } else {
-      const fbData = {};
-      Object.keys(K).forEach(k => fbData[k] = state[k]);
-      db.set(fbData);
+  /* Add cloud backup/restore buttons to the navigation */
+  if(db) {
+    const navTabs = document.querySelector('.nav-tabs');
+    if(navTabs) {
+      const wrap = document.createElement('div');
+      wrap.style.cssText = 'display:flex;gap:4px;margin-right:8px;';
+      wrap.innerHTML = `
+        <button class="tab" onclick="cloudBackup()" title="رفع نسخة من بياناتك للسحابة" style="background:#22c55e22;color:#22c55e;font-size:12px">☁️↑ نسخة احتياطية</button>
+        <button class="tab" onclick="cloudRestore()" title="جلب آخر نسخة من السحابة" style="background:#3b82f622;color:#3b82f6;font-size:12px">☁️↓ استعادة</button>
+      `;
+      navTabs.appendChild(wrap);
     }
-    fbSynced = true;
-    syncBar.innerHTML = '✅ تمت المزامنة';
-    syncBar.style.borderColor = '#22c55e';
-    syncBar.style.color = '#22c55e';
-    setTimeout(() => syncBar.remove(), 2000);
-  }).catch(e => {
-    syncBar.innerHTML = '⚠️ تعذّرت المزامنة - يعمل بالبيانات المحلية';
-    syncBar.style.borderColor = '#ef4444';
-    syncBar.style.color = '#ef4444';
-    setTimeout(() => syncBar.remove(), 3000);
-  });
+  }
 });
 </script>
 
