@@ -2497,45 +2497,123 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt
 let state = { devices: [], sales: [], expenses: [], employees: [], salaries: [], advances: [], closings: [], categories: { sales: [], expenses: [] }, fixedBtns: [], shopInfo: {}, actionSettings: {}, maintStock: [] };
 
 function loadAll() { Object.keys(K).forEach(k => state[k] = load(K[k], state[k])); }
-function saveAll() {
-  Object.keys(K).forEach(k => save(K[k], state[k]));
-}
 
-/* ★ Manual Cloud Backup / Restore (no auto-sync to avoid race conditions) */
-function cloudBackup() {
-  if(!db) return alert('❌ Firebase غير متاح');
-  const fbData = {};
+/* ★ Firebase Auto-Sync — حفظ تلقائي مع حماية من race conditions */
+let fbSyncReady = false; // لا تكتب لـ Firebase قبل ما تقرا منه أول
+
+function pushToFirebase() {
+  if (!db) return;
+  const d = {};
   Object.keys(K).forEach(k => {
     const v = state[k];
-    if(v == null) return;
-    if(Array.isArray(v) && v.length === 0) return;
-    if(!Array.isArray(v) && typeof v === 'object' && Object.keys(v).length === 0) return;
-    fbData[k] = v;
+    if (v == null) return;
+    if (Array.isArray(v) && v.length === 0) return;
+    if (!Array.isArray(v) && typeof v === 'object' && Object.keys(v).length === 0) return;
+    d[k] = v;
   });
-  if(Object.keys(fbData).length === 0) return alert('⚠️ لا توجد بيانات للحفظ');
-  if(!confirm('سيتم رفع كل بياناتك للسحابة (Firebase). متابعة؟')) return;
-  db.set(fbData).then(() => {
-    alert('✅ تم الرفع بنجاح\nالأقسام: ' + Object.keys(fbData).join(', '));
-  }).catch(e => alert('❌ فشل: ' + e.message));
+  if (Object.keys(d).length === 0) return;
+  db.set(d).catch(e => console.warn('☁️ Firebase write failed:', e.message));
 }
 
+function saveAll() {
+  Object.keys(K).forEach(k => save(K[k], state[k])); // localStorage دايماً
+  if (db && fbSyncReady) {                             // Firebase لو الـ sync جاهز
+    clearTimeout(saveAll._t);
+    saveAll._t = setTimeout(pushToFirebase, 1500);     // debounce 1.5 ثانية
+  }
+}
+
+function applyFirebaseData(fbData) {
+  if (!fbData) return false;
+  let changed = false;
+  Object.keys(K).forEach(k => {
+    if (fbData[k] == null) return;
+    const cur = state[k];
+    let newVal;
+    if (Array.isArray(cur)) {
+      newVal = Array.isArray(fbData[k]) ? fbData[k] : Object.values(fbData[k]);
+      if (newVal.length === 0) return; // مش هنستبدل بيانات بفراغ
+    } else if (k === 'categories') {
+      const fc = fbData[k] || {};
+      newVal = {
+        sales:    Array.isArray(fc.sales)    ? fc.sales    : Object.values(fc.sales    || {}),
+        expenses: Array.isArray(fc.expenses) ? fc.expenses : Object.values(fc.expenses || {})
+      };
+    } else {
+      newVal = fbData[k];
+    }
+    if (JSON.stringify(newVal) !== JSON.stringify(cur)) {
+      state[k] = newVal;
+      save(K[k], newVal);
+      changed = true;
+    }
+  });
+  return changed;
+}
+
+function renderCurrentPage() {
+  const active = document.querySelector('.page.active');
+  if (!active) return;
+  const id = active.id.replace('page-', '');
+  const r = {
+    dashboard: renderDashboard,
+    sales:     () => { renderQuickButtons(); renderSales(); populateSalesSelects(); },
+    devices:   restoreInvTab,
+    expenses:  () => { populateExpenseCats(); renderExpenses(); },
+    salaries:  () => { renderEmployees(); renderSalaries(); populateSalaryEmps(); },
+    advances:  () => { populateAdvanceEmps(); renderAdvances(); },
+    yahya:     renderYahya,
+    closing:   renderClosing,
+    reports:   () => { document.getElementById('month-picker').value = thisMonth(); renderMonthly(); },
+    settings:  renderSettings
+  };
+  if (r[id]) r[id]();
+}
+
+/* ★ رفع يدوي للسحابة */
+function cloudBackup() {
+  if (!db) return alert('❌ Firebase غير متاح');
+  const d = {};
+  Object.keys(K).forEach(k => {
+    const v = state[k];
+    if (v == null) return;
+    if (Array.isArray(v) && v.length === 0) return;
+    if (!Array.isArray(v) && typeof v === 'object' && Object.keys(v).length === 0) return;
+    d[k] = v;
+  });
+  if (Object.keys(d).length === 0) return alert('⚠️ لا توجد بيانات للرفع');
+  db.set(d)
+    .then(() => { fbSyncReady = true; toast('✅ تم الرفع للسحابة'); })
+    .catch(e => alert('❌ فشل الرفع: ' + e.message));
+}
+
+/* ★ جلب يدوي من السحابة (دايماً force-refresh بدون مقارنة) */
 function cloudRestore() {
-  if(!db) return alert('❌ Firebase غير متاح');
-  if(!confirm('⚠️ سيتم استبدال البيانات المحلية بالنسخة من السحابة. متابعة؟')) return;
+  if (!db) return alert('❌ Firebase غير متاح');
+  if (!confirm('⚠️ جلب آخر نسخة من السحابة وتطبيقها؟')) return;
   db.once('value').then(snap => {
-    const data = snap.val();
-    if(!data) return alert('⚠️ لا توجد بيانات في السحابة');
+    const fbData = snap.val();
+    if (!fbData) return alert('⚠️ لا توجد بيانات في السحابة');
+    // Force-apply بدون مقارنة — دايماً ياخد من Firebase
     Object.keys(K).forEach(k => {
-      if(data[k] === undefined || data[k] === null) return;
-      const expectArray = Array.isArray(state[k]);
-      if(expectArray) state[k] = Array.isArray(data[k]) ? data[k] : Object.values(data[k]);
-      else state[k] = data[k];
+      if (fbData[k] == null) return;
+      if (Array.isArray(state[k])) {
+        const arr = Array.isArray(fbData[k]) ? fbData[k] : Object.values(fbData[k]);
+        if (arr.length > 0) { state[k] = arr; save(K[k], arr); }
+      } else if (k === 'categories') {
+        const fc = fbData[k] || {};
+        state[k] = {
+          sales:    Array.isArray(fc.sales)    ? fc.sales    : Object.values(fc.sales    || {}),
+          expenses: Array.isArray(fc.expenses) ? fc.expenses : Object.values(fc.expenses || {})
+        };
+        save(K[k], state[k]);
+      } else {
+        state[k] = fbData[k]; save(K[k], fbData[k]);
+      }
     });
-    if(state.categories && !Array.isArray(state.categories.sales)) state.categories.sales = Object.values(state.categories.sales || {});
-    if(state.categories && !Array.isArray(state.categories.expenses)) state.categories.expenses = Object.values(state.categories.expenses || {});
-    Object.keys(K).forEach(k => save(K[k], state[k]));
-    alert('✅ تم الاستعادة\nالأقسام: ' + Object.keys(data).join(', ') + '\nسيتم تحديث الصفحة');
-    location.reload();
+    fbSyncReady = true;
+    toast('✅ تم التحديث من السحابة');
+    renderCurrentPage();
   }).catch(e => alert('❌ فشل: ' + e.message));
 }
 
@@ -3887,34 +3965,56 @@ function migrateDataFromHTML() {
   }
 }
 
-document.addEventListener('DOMContentLoaded', () => {
-  loadAll();
-  migrateDataFromHTML(); // ← restore static HTML data to localStorage if needed
-  initUI();
+/* ★ مساعد: استعادة آخر صفحة */
+function restoreLastPage() {
+  const lastPage = localStorage.getItem('abda_last_page');
+  if (!lastPage || !document.getElementById('page-' + lastPage)) return;
+  const tabBtn = Array.from(document.querySelectorAll('.tab')).find(t => {
+    const oc = t.getAttribute('onclick') || '';
+    return oc.includes("'" + lastPage + "'") || oc.includes('"' + lastPage + '"');
+  });
+  showPage(lastPage, tabBtn || null);
+}
 
-  /* Add cloud backup/restore buttons to the navigation */
-  if(db) {
+document.addEventListener('DOMContentLoaded', () => {
+  // 1) حمّل من localStorage فوراً (سريع)
+  loadAll();
+  migrateDataFromHTML();
+  initUI();
+  restoreLastPage();
+
+  // 2) زرار sync يدوي في الـ nav
+  if (db) {
     const navTabs = document.querySelector('.nav-tabs');
-    if(navTabs) {
+    if (navTabs) {
       const wrap = document.createElement('div');
-      wrap.style.cssText = 'display:flex;gap:4px;margin-right:8px;';
+      wrap.style.cssText = 'display:flex;gap:4px;margin-right:8px;align-items:center;';
       wrap.innerHTML = `
-        <button class="tab" onclick="cloudBackup()" title="رفع نسخة من بياناتك للسحابة" style="background:#22c55e22;color:#22c55e;font-size:12px">☁️↑ نسخة احتياطية</button>
-        <button class="tab" onclick="cloudRestore()" title="جلب آخر نسخة من السحابة" style="background:#3b82f622;color:#3b82f6;font-size:12px">☁️↓ استعادة</button>
+        <span id="fb-status" title="حالة الاتصال بالسحابة" style="font-size:18px;cursor:default;line-height:1">🔄</span>
+        <button class="tab" onclick="cloudBackup()"  title="رفع بياناتك للسحابة الآن"      style="background:#22c55e22;color:#22c55e;font-size:12px">☁️↑ رفع</button>
+        <button class="tab" onclick="cloudRestore()" title="جلب آخر نسخة من السحابة الآن" style="background:#3b82f622;color:#3b82f6;font-size:12px">☁️↓ جلب</button>
       `;
       navTabs.appendChild(wrap);
     }
   }
 
-  // ★ استعادة آخر صفحة كان فيها المستخدم قبل الريفريش
-  const lastPage = localStorage.getItem('abda_last_page');
-  if (lastPage && document.getElementById('page-' + lastPage)) {
-    // إيجاد زرار التاب الخاص بالصفحة
-    const tabBtn = Array.from(document.querySelectorAll('.tab')).find(t => {
-      const oc = t.getAttribute('onclick') || '';
-      return oc.includes("'" + lastPage + "'") || oc.includes('"' + lastPage + '"');
+  // 3) Firebase: اقرأ في الخلفية، لو في بيانات أحدث → حدّث الصفحة
+  if (db) {
+    db.once('value').then(snap => {
+      fbSyncReady = true;
+      const el = document.getElementById('fb-status');
+      const changed = applyFirebaseData(snap.val());
+      if (el) el.textContent = '☁️';
+      if (el) el.title = 'متصل بالسحابة ✅';
+      if (changed) renderCurrentPage(); // أعد رسم الصفحة الحالية بالبيانات الجديدة
+    }).catch(e => {
+      fbSyncReady = true; // اشتغل offline لو Firebase فشل
+      const el = document.getElementById('fb-status');
+      if (el) { el.textContent = '📵'; el.title = 'غير متصل بالسحابة'; }
+      console.warn('Firebase load error:', e.message);
     });
-    showPage(lastPage, tabBtn || null);
+  } else {
+    fbSyncReady = true;
   }
 });
 </script>
