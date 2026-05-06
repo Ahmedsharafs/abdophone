@@ -2555,8 +2555,27 @@ const isSoftCategory = c => c && (c.includes('سوفت')||c.includes('برمجة
 function showPage(id, btn) {
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active')); document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
   document.getElementById('page-' + id).classList.add('active'); if(btn) btn.classList.add('active'); window.scrollTo(0, 0);
-  const r = { dashboard:renderDashboard, sales:()=>{renderQuickButtons();renderSales();populateSalesSelects();}, devices:renderDevices, expenses:()=>{populateExpenseCats();renderExpenses();}, salaries:()=>{renderEmployees();renderSalaries();populateSalaryEmps();}, advances:()=>{populateAdvanceEmps();renderAdvances();}, yahya:renderYahya, closing:renderClosing, reports:()=>{document.getElementById('month-picker').value=thisMonth();renderMonthly();}, settings:renderSettings };
+  localStorage.setItem('abda_last_page', id); // ← حفظ آخر صفحة
+  const r = { dashboard:renderDashboard, sales:()=>{renderQuickButtons();renderSales();populateSalesSelects();}, devices:restoreInvTab, expenses:()=>{populateExpenseCats();renderExpenses();}, salaries:()=>{renderEmployees();renderSalaries();populateSalaryEmps();}, advances:()=>{populateAdvanceEmps();renderAdvances();}, yahya:renderYahya, closing:renderClosing, reports:()=>{document.getElementById('month-picker').value=thisMonth();renderMonthly();}, settings:renderSettings };
   if(r[id]) r[id]();
+}
+
+function switchInvTab(tab, btn) {
+  document.querySelectorAll('.inv-tab').forEach(t => t.classList.remove('active'));
+  if(btn) btn.classList.add('active');
+  document.getElementById('inv-section-main').style.display  = tab === 'main'  ? '' : 'none';
+  document.getElementById('inv-section-maint').style.display = tab === 'maint' ? '' : 'none';
+  localStorage.setItem('abda_last_inv_tab', tab); // ← حفظ آخر تاب المخزون
+  if(tab === 'maint') renderMaintStock();
+  else renderDevices();
+}
+
+function restoreInvTab() {
+  // استعادة آخر تاب مخزون شافه المستخدم (افتراضي: مخزون الصيانة)
+  const lastTab = localStorage.getItem('abda_last_inv_tab') || 'maint';
+  const tabs = document.querySelectorAll('.inv-tab');
+  const targetBtn = Array.from(tabs).find(t => t.getAttribute('onclick')?.includes("'" + lastTab + "'")) || tabs[1];
+  switchInvTab(lastTab, targetBtn);
 }
 
 function openModal(id) {
@@ -2654,14 +2673,6 @@ function toggleStar(id) {
   toast(d.starred ? '⭐ تمت الإضافة للبيع السريع' : 'تمت الإزالة من البيع السريع');
 }
 
-function switchInvTab(tab, btn) {
-  document.querySelectorAll('.inv-tab').forEach(t => t.classList.remove('active'));
-  btn.classList.add('active');
-  document.getElementById('inv-section-main').style.display  = tab === 'main'  ? '' : 'none';
-  document.getElementById('inv-section-maint').style.display = tab === 'maint' ? '' : 'none';
-  if(tab === 'maint') renderMaintStock();
-  else renderDevices();
-}
 
 /* ★ Maintenance Stock */
 function renderMaintStock() {
@@ -3893,6 +3904,17 @@ document.addEventListener('DOMContentLoaded', () => {
       `;
       navTabs.appendChild(wrap);
     }
+  }
+
+  // ★ استعادة آخر صفحة كان فيها المستخدم قبل الريفريش
+  const lastPage = localStorage.getItem('abda_last_page');
+  if (lastPage && document.getElementById('page-' + lastPage)) {
+    // إيجاد زرار التاب الخاص بالصفحة
+    const tabBtn = Array.from(document.querySelectorAll('.tab')).find(t => {
+      const oc = t.getAttribute('onclick') || '';
+      return oc.includes("'" + lastPage + "'") || oc.includes('"' + lastPage + '"');
+    });
+    showPage(lastPage, tabBtn || null);
   }
 });
 </script>
