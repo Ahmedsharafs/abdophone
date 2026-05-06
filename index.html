@@ -2499,7 +2499,7 @@ let state = { devices: [], sales: [], expenses: [], employees: [], salaries: [],
 function loadAll() { Object.keys(K).forEach(k => state[k] = load(K[k], state[k])); }
 function saveAll() {
   Object.keys(K).forEach(k => save(K[k], state[k]));
-  if(db) {
+  if(db && fbSynced) {
     const fbData = {};
     Object.keys(K).forEach(k => fbData[k] = state[k]);
     db.set(fbData).catch(e => console.warn('Firebase write failed:', e));
